@@ -1,0 +1,75 @@
+networks:
+  arbitrum:
+    initialBlock:
+      map_dex_deployed: 220375059
+    params:
+      # There are two more resolver deployments (0xE8a07a32489BD9d5a00f01A55749Cf5cB854Fd13 and 0xb8f526718FF58758E256D9aD86bC194a9ff5986D) but the return types of `getPoolReservesAdjusted(address)` and `getAllPoolsReservesAdjusted()` are missing the `centerPrice`
+      map_dex_deployed: liquidity_contract=0x52Aa899454998Be5b000Ad077a46Bbe360F4e497&factory_address=0x91716C4EDA1Fb55e84Bf8b4c7085f84285c19085&resolvers[0][0]=404259697&resolvers[0][1]=0x05Bd8269A20C472b148246De20E6852091BF16Ff&resolvers[1][0]=336886668&resolvers[1][1]=0x666A400b8cDA0Dc9b59D61706B0F982dDdAF2d98&resolvers[2][0]=0&resolvers[2][1]=0xCe6F4E40152a1DF97ae95a7e4F60D944871A4060&tvl_query_frequency=14400&tvl_query_start_block=
+      map_protocol_changes: liquidity_contract=0x52Aa899454998Be5b000Ad077a46Bbe360F4e497&factory_address=0x91716C4EDA1Fb55e84Bf8b4c7085f84285c19085&resolvers[0][0]=404259697&resolvers[0][1]=0x05Bd8269A20C472b148246De20E6852091BF16Ff&resolvers[1][0]=336886668&resolvers[1][1]=0x666A400b8cDA0Dc9b59D61706B0F982dDdAF2d98&resolvers[2][0]=0&resolvers[2][1]=0xCe6F4E40152a1DF97ae95a7e4F60D944871A4060&tvl_query_frequency=14400&tvl_query_start_block=
+      map_initialized_components: dexes[0]=0x0B1a513ee24972DAEf112bC777a5610d4325C9e7&dexes[1]=0x667701e51B4D1Ca244F17C78F7aB8744B4C99F9B&deploy_block=293225939&deploy_tx=0xd0c3abbdcdcd7caf1534933545c62e59f55a7d172bcfb0b3fa422c33ddf18239
+binaries:
+  default:
+    file: ../target/wasm32-unknown-unknown/release/ethereum_fluid_v1.wasm
+    type: wasm/rust-v1
+modules:
+  - name: map_dex_deployed
+    kind: map
+    inputs:
+      - params: string
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:tycho.evm.v1.BlockTransactionProtocolComponents
+
+  - name: store_contract_addresses
+    kind: store
+    inputs:
+      - map: map_dex_deployed
+    updatePolicy: set
+    valueType: string
+
+  - name: store_components
+    kind: store
+    inputs:
+      - map: map_dex_deployed
+    updatePolicy: set
+    valueType: bytes
+
+  - name: map_initialized_components
+    kind: map
+    inputs:
+      - params: string
+      - source: sf.ethereum.type.v2.Block
+      - store: store_components
+    output:
+      type: proto:tycho.evm.v1.BlockTransactionProtocolComponents
+
+  - name: store_initialized_components
+    kind: store
+    inputs:
+      - map: map_initialized_components
+    updatePolicy: set
+    valueType: int64
+
+  - name: map_protocol_changes
+    kind: map
+    inputs:
+      - params: string
+      - source: sf.ethereum.type.v2.Block
+      - map: map_initialized_components
+      - store: store_components
+      - store: store_initialized_components
+      - store: store_contract_addresses
+    output:
+      type: proto:tycho.evm.v1.BlockChanges
+network: arbitrum
+package:
+  name: arbitrum_fluid_v1
+  version: v0.4.0
+protobuf:
+  files:
+    - tycho/evm/v1/vm.proto
+    - tycho/evm/v1/common.proto
+    - tycho/evm/v1/utils.proto
+  importPaths:
+    - ../../../proto
+specVersion: v0.1.0

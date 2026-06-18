@@ -6,7 +6,7 @@ use crate::abi::{
     erc20,
 };
 use anyhow::{anyhow, Ok, Result};
-use ethabi::ethereum_types::Address;
+use ethabi::{ethereum_types::Address, Hash};
 use itertools::Itertools;
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -66,6 +66,7 @@ pub struct PreResolverDexes {
     dexes: Vec<Address>,
     /// Block the first resolver contract was deployed
     deploy_block: u64,
+    deploy_tx: Hash,
 }
 
 impl PreResolverDexes {
@@ -258,11 +259,12 @@ fn map_initialized_components(
 
     let mut new_components = HashMap::new();
     // emit all components that were deployed before the resolvers were deployed
-    for tx in block.transactions() {
-        if tx.hash == hex!("eb645a1cec04e843da6b268282d7002e3abaeb792cc380db11982b89dd52997a") {
-            for address in pre_resolver_dexes.iter() {
-                try_emit_buffered_component(&components_store, &mut new_components, tx, address)?;
-            }
+    if let Some(tx) = block
+        .transactions()
+        .find(|tx| tx.hash.as_slice() == params.deploy_tx.as_bytes())
+    {
+        for address in pre_resolver_dexes.iter() {
+            try_emit_buffered_component(&components_store, &mut new_components, tx, address)?;
         }
     }
 
@@ -614,6 +616,8 @@ mod test {
     fn test_show_encoded_pre_resolver_dexes() {
         let params = PreResolverDexes {
             deploy_block: 21596670,
+            deploy_tx: hex!("eb645a1cec04e843da6b268282d7002e3abaeb792cc380db11982b89dd52997a")
+                .into(),
             dexes: PRE_RESOLVER_DEXES
                 .iter()
                 .map(|a| Address::from_str(a).unwrap())

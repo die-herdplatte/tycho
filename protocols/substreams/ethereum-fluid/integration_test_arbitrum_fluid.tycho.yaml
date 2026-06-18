@@ -1,0 +1,26 @@
+substreams_yaml_path: ./arbitrum-fluid.yaml
+skip_balance_check: true # Vault like structure
+initialized_accounts:
+  - "0x91716C4EDA1Fb55e84Bf8b4c7085f84285c19085" # Factory
+  - "0x52Aa899454998Be5b000Ad077a46Bbe360F4e497" # Liquidity Proxy
+  - "0x05Bd8269A20C472b148246De20E6852091BF16Ff" # Reserves Resolver 1
+  - "0x666A400b8cDA0Dc9b59D61706B0F982dDdAF2d98" # Reserves Resolver 2
+  - "0xCe6F4E40152a1DF97ae95a7e4F60D944871A4060" # Reserves Resolver 3
+protocol_type_names:
+  - "fluid_dex_pool"
+protocol_system: "fluid_v1"
+module_name: "map_protocol_changes"
+tests:
+  - name: wstETH_ETH
+    start_block: 285775309
+    stop_block: 285775309
+    expected_components:
+      - id: "0x0B1a513ee24972DAEf112bC777a5610d4325C9e7"
+        tokens:
+          - "0x5979D7b546E38E414F7E9822514be443A4800529"
+          - "0x0000000000000000000000000000000000000000"
+        static_attributes:
+          reserves_resolver_address: "0xCe6F4E40152a1DF97ae95a7e4F60D944871A4060"
+          deploy_tx: "0x7d7198b9af07566444ba8a13e655cf79a4052388de881e48203570f567648739"
+        creation_tx: "0xd0c3abbdcdcd7caf1534933545c62e59f55a7d172bcfb0b3fa422c33ddf18239"
+        skip_execution: false
