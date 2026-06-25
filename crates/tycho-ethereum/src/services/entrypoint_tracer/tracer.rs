@@ -1794,4 +1794,211 @@ mod tests {
             balance
         );
     }
+
+    /// Demonstrates how tracing `KipseliPropAMMWrapper.swap(...)` and
+    /// `KipseliPropAMMWrapper.quote(...)` yield very different tracing results, even though both
+    /// describe the same WETH->USDC trade.
+    ///
+    /// `quote` is a `view` that only forwards to an off-chain quote wrapper, so its trace touches a
+    /// small, read-only set of contracts. `swap` actually moves funds: it pushes `tokenIn` to the
+    /// underlying propAMM and runs the swap, so its trace fans out across the token contracts, the
+    /// propAMM and the signature registry, and surfaces retriggers the `quote` path never sees.
+    ///
+    /// The call mirrors this reference `cast call`:
+    ///   cast call $KIPSELI_PROP_AMM_WRAPPER \
+    ///     'swap(address,address,uint256,uint256,address,uint256)(uint256)' \
+    ///     $WETH $USDC 1000000000000000000 1 $RECIPIENT $(cast max-uint) \
+    ///     --from $RECIPIENT --block 25379556 \
+    ///     --override-code "$REGISTRY:$REGISTRY_BYTECODE" \
+    ///     --override-state-diff "$WETH:$(cast index address $KIPSELI_PROP_AMM_WRAPPER 3):1e18"
+    ///
+    /// Run with:
+    ///   RPC_URL=<archive node> cargo test --package tycho-ethereum --lib \
+    ///     test_trace_kipseli_swap_vs_quote -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires an archive RPC connection"]
+    async fn test_trace_kipseli_swap_vs_quote() {
+        fn print_tracing_result(result: &TracingResult) {
+            let mut addrs: Vec<_> = result
+                .accessed_slots
+                .keys()
+                .cloned()
+                .collect();
+            addrs.sort();
+            println!("  accessed contracts ({}):", addrs.len());
+            for addr in &addrs {
+                println!("    {addr} ({} slot(s))", result.accessed_slots[addr].len());
+            }
+            let mut retriggers: Vec<_> = result.retriggers.iter().collect();
+            retriggers.sort();
+            println!("  retriggers ({}):", retriggers.len());
+            for (addr, loc) in retriggers {
+                println!("    {addr} @ slot {} offset {}", loc.key, loc.offset);
+            }
+        }
+
+        // --- constants from the reference `cast call` ---------------------------------------
+        let wrapper = Bytes::from_str("0x71e790dd841c8A9061487cb3E78C288E75cE0B3d").unwrap();
+        let registry = Bytes::from_str("0xDa7AfeeD01fe625CF15d187a19f94B45f00b8C5F").unwrap();
+        let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
+        let recipient = Bytes::from_str("0x1000000000000000000000000000000000000000").unwrap();
+        let amount_in = U256::from(1_000_000_000_000_000_000u128); // 1 WETH
+
+        // Mock registry bytecode injected via `--override-code`. The underlying propAMM validates
+        // signed quotes against this registry; the mock makes the swap succeed in simulation.
+        let registry_bytecode = Bytes::from_str("0x608060405234801561000f575f5ffd5b50600436106100a6575f3560e01c806375ceb8371161006e57806375ceb8371461013557806384b0196e1461016f578063a9114b0f1461018a578063b278d9b01461019d578063d3fdd87d146101c4578063e50de8ea146101eb575f5ffd5b80630260ee36146100aa57806304b07a5e146100e457806316c83adc146100f95780633644e5151461011a57806343d24a5e14610122575b5f5ffd5b6100d17f000000000000000000000000000000000000000000000000000000000000000081565b6040519081526020015b60405180910390f35b6100f76100f2366004610bab565b6101fe565b005b61010c610107366004610bde565b61027c565b6040516100db929190610c51565b6100d1610382565b6100f7610130366004610bab565b610390565b61015f610143366004610c77565b5f60208181529281526040808220909352908152205460ff1681565b60405190151581526020016100db565b610177610412565b6040516100db9796959493929190610cd6565b6100f7610198366004610d8d565b610477565b6100d17f000000000000000000000000000000000000000000000000000000000000000081565b6100d17f7292c1183e2a96abca28243108cd17d54a2a685fe38b68790c055bf674ba392381565b6100f76101f9366004610df7565b6104cc565b335f908152602081815260408083206001600160a01b038516845290915290205460ff166102295750565b335f818152602081815260408083206001600160a01b0386168085529252808320805460ff19169055519092917f253a35aa24fae91cd5cd3267c1809e4cdde7facdb7b7f75ba2e8e39b7fd570e291a350565b5f60605f61028a338761076b565b805442945090915063ffffffff80871690851610806102b457508463ffffffff168463ffffffff16115b156102d25760405163199a8a0560e21b815260040160405180910390fd5b60ff60d882901c168067ffffffffffffffff8111156102f3576102f3610e36565b60405190808252806020026020018201604052801561031c578160200160208202803683370190505b509350805f0361032e5750505061037a565b816001600160d81b0316845f8151811061034a5761034a610e4a565b602090810291909101015260015b818110156103755783810154602080830287010152600101610358565b505050505b935093915050565b5f61038b6107a5565b905090565b335f908152602081815260408083206001600160a01b038516845290915290205460ff16156103bc5750565b335f818152602081815260408083206001600160a01b0386168085529252808320805460ff19166001179055519092917fccc62b456e636a792392942509bf838728082b6d41361e6730f6d2c24a06ccf091a350565b600f60f81b6060805f80808361046560408051808201825260128152715072696f557064617465526567697374727960701b602080830191909152825180840190935260018352603160f81b9083015291565b97989097965046955030945091925090565b6001600160a01b0385165f9081526020818152604080832033845290915290205460ff166104b85760405163ea8e4eb560e01b815260040160405180910390fd5b6104c585858585856107de565b5050505050565b5f5b8181101561076657368383838181106104e9576104e9610e4a565b90506020028101906104fb9190610e5e565b90505f7f7292c1183e2a96abca28243108cd17d54a2a685fe38b68790c055bf674ba392361052c6020840184610bab565b60408401356105416080860160608701610e7c565b61054e6080870187610e95565b60405160200161055f929190610edb565b604051602081830303815290604052805190602001206040516020016105b69594939291909485526001600160a01b03939093166020850152604084019190915263ffffffff166060830152608082015260a00190565b6040516020818303038152906040528051906020012090505f6105d882610994565b90506105e76020840184610bab565b6001600160a01b03166106006040850160208601610bab565b6001600160a01b0316036106535761063161061e6020850185610bab565b8261062c60a0870187610f02565b6109f0565b61064e5760405163ea8e4eb560e01b815260040160405180910390fd5b610724565b5f806106626020860186610bab565b6001600160a01b03166001600160a01b031681526020019081526020015f205f8460200160208101906106959190610bab565b6001600160a01b0316815260208101919091526040015f205460ff166106ce5760405163ea8e4eb560e01b815260040160405180910390fd5b6106de6040840160208501610bab565b6001600160a01b03166106fd826106f860a0870187610f02565b610a35565b6001600160a01b0316146107245760405163ea8e4eb560e01b815260040160405180910390fd5b61075b6107346020850185610bab565b60408501356107496080870160608801610e7c565b6107566080880188610e95565b6107de565b5050506001016104ce565b505050565b604080516001600160a01b038416602080830191909152818301849052825180830384018152606090920190925280519101205b92915050565b7f00000000000000000000000000000000000000000000000000000000000000006107ce610b45565b156107db5761038b610abd565b90565b5f8190036107ff57604051630e6db8e560e01b815260040160405180910390fd5b60ff81111561082157604051630c74bf5160e41b815260040160405180910390fd5b60d882825f81811061083557610835610e4a565b90506020020135901c5f1461085d5760405163057902cf60e11b815260040160405180910390fd5b63ffffffff83164261088f7f000000000000000000000000000000000000000000000000000000000000000083610f45565b10156108ae576040516364e76ef160e11b815260040160405180910390fd5b6108d87f000000000000000000000000000000000000000000000000000000000000000042610f45565b8111156108f8576040516364e76ef160e11b815260040160405180910390fd5b5f610903878761076b565b805490915063ffffffff861660e082901c11156109335760405163199a8a0560e21b815260040160405180910390fd5b5f85855f81811061094657610946610e4a565b9050602002013560d887879050901b60e08963ffffffff16901b171790508083555f600190505b8581101561098857602081028701358482015560010161096d565b50505050505050505050565b7f00000000000000000000000000000000000000000000000000000000000000006109bd610b45565b156109cd576109ca610abd565b90505b6719010000000000005f5280601a5281603a52604260182090505f603a52919050565b5f604051631626ba7e60e01b80825285600483015260248201604081528460448401528486606485013760208160648701858b5afa9051909114169695505050505050565b5f6040518260408114610a505760418114610a775750610aa8565b60208581013560ff81901c601b0190915285356040526001600160ff1b0316606052610a88565b60408501355f1a6020526040856040375b50845f526020600160805f60015afa5191505f606052806040523d610ab5575b638baa579f5f526004601cfd5b509392505050565b604080517f8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f81527f000000000000000000000000000000000000000000000000000000000000000060208201527f00000000000000000000000000000000000000000000000000000000000000009181019190915246606082015230608082015260a0902090565b467f000000000000000000000000000000000000000000000000000000000000000014307f000000000000000000000000000000000000000000000000000000000000000014161590565b80356001600160a01b0381168114610ba6575f5ffd5b919050565b5f60208284031215610bbb575f5ffd5b610bc482610b90565b9392505050565b803563ffffffff81168114610ba6575f5ffd5b5f5f5f60608486031215610bf0575f5ffd5b83359250610c0060208501610bcb565b9150610c0e60408501610bcb565b90509250925092565b5f8151808452602084019350602083015f5b82811015610c47578151865260209586019590910190600101610c29565b5093949350505050565b63ffffffff83168152604060208201525f610c6f6040830184610c17565b949350505050565b5f5f60408385031215610c88575f5ffd5b610c9183610b90565b9150610c9f60208401610b90565b90509250929050565b5f81518084528060208401602086015e5f602082860101526020601f19601f83011685010191505092915050565b60ff60f81b8816815260e060208201525f610cf460e0830189610ca8565b8281036040840152610d068189610ca8565b606084018890526001600160a01b038716608085015260a0840186905283810360c08501529050610d378185610c17565b9a9950505050505050505050565b5f5f83601f840112610d55575f5ffd5b50813567ffffffffffffffff811115610d6c575f5ffd5b6020830191508360208260051b8501011115610d86575f5ffd5b9250929050565b5f5f5f5f5f60808688031215610da1575f5ffd5b610daa86610b90565b945060208601359350610dbf60408701610bcb565b9250606086013567ffffffffffffffff811115610dda575f5ffd5b610de688828901610d45565b969995985093965092949392505050565b5f5f60208385031215610e08575f5ffd5b823567ffffffffffffffff811115610e1e575f5ffd5b610e2a85828601610d45565b90969095509350505050565b634e487b7160e01b5f52604160045260245ffd5b634e487b7160e01b5f52603260045260245ffd5b5f823560be19833603018112610e72575f5ffd5b9190910192915050565b5f60208284031215610e8c575f5ffd5b610bc482610bcb565b5f5f8335601e19843603018112610eaa575f5ffd5b83018035915067ffffffffffffffff821115610ec4575f5ffd5b6020019150600581901b3603821315610d86575f5ffd5b5f6001600160fb1b03831115610eef575f5ffd5b8260051b80858437919091019392505050565b5f5f8335601e19843603018112610f17575f5ffd5b83018035915067ffffffffffffffff821115610f31575f5ffd5b602001915036819003821315610d86575f5ffd5b8082018082111561079f57634e487b7160e01b5f52601160045260245ffdfea26469706673582212205c6eeedb5c3a98b1ae0deb734ac4af407086383d7dfa492ee1367c17364f6d0c64736f6c634300081c0033").unwrap();
+
+        // --- calldata helpers ---------------------------------------------------------------
+        let addr_word = |addr: &Bytes| -> [u8; 32] {
+            let mut word = [0u8; 32];
+            word[12..].copy_from_slice(addr.as_ref());
+            word
+        };
+        let encode = |signature: &str, words: &[[u8; 32]]| -> Bytes {
+            let mut data = keccak256(signature)[..4].to_vec();
+            for word in words {
+                data.extend_from_slice(word);
+            }
+            Bytes::from(data)
+        };
+
+        // swap(tokenIn, tokenOut, amountIn, minAmountOut, recipient, deadline)
+        let swap_calldata = encode(
+            "swap(address,address,uint256,uint256,address,uint256)",
+            &[
+                addr_word(&weth),
+                addr_word(&usdc),
+                amount_in.to_be_bytes::<32>(),
+                U256::from(1u8).to_be_bytes::<32>(),
+                addr_word(&recipient),
+                U256::MAX.to_be_bytes::<32>(),
+            ],
+        );
+
+        // quote(tokenIn, tokenOut, amountIn)
+        let quote_calldata = encode(
+            "quote(address,address,uint256)",
+            &[addr_word(&weth), addr_word(&usdc), amount_in.to_be_bytes::<32>()],
+        );
+
+        // --- state overrides ----------------------------------------------------------------
+        // `swap` uses the push-payment model: the wrapper must already hold `amountIn` of WETH so
+        // its `safeTransfer` to the propAMM succeeds. WETH keeps balances in the mapping at slot 3,
+        // so we override `balanceOf[wrapper] = amountIn`. This is the `cast index address $WRAPPER
+        // 3` slot used by the reference `--override-state-diff`.
+        let weth_balance_slot = {
+            let mut buf = [0u8; 64];
+            buf[12..32].copy_from_slice(wrapper.as_ref());
+            buf[63] = 3;
+            Bytes::from(keccak256(buf).to_vec())
+        };
+        let mut weth_slots = BTreeMap::new();
+        weth_slots.insert(weth_balance_slot, Bytes::from(amount_in.to_be_bytes::<32>().as_slice()));
+
+        // The mock registry backs the underlying propAMM on both paths, so override it for both.
+        let registry_override =
+            AccountOverrides { slots: None, native_balance: None, code: Some(registry_bytecode) };
+
+        let mut swap_overrides = BTreeMap::new();
+        swap_overrides.insert(registry.clone(), registry_override.clone());
+        swap_overrides.insert(
+            weth.clone(),
+            AccountOverrides {
+                slots: Some(StorageOverride::Diff(weth_slots)),
+                native_balance: None,
+                code: None,
+            },
+        );
+
+        let mut quote_overrides = BTreeMap::new();
+        quote_overrides.insert(registry, registry_override);
+
+        // BLOCK=25379556
+        let block_hash =
+            Bytes::from_str("0xfd0e47025d4e098da21b15ff04ad019bc82d4ee42259d1faa4f68a5b61e90ad5")
+                .unwrap();
+
+        let tracer = TestFixture::create_tracer();
+
+        let swap_entry = EntryPointWithTracingParams::new(
+            EntryPoint::new(
+                format!("{wrapper}:swap(address,address,uint256,uint256,address,uint256)"),
+                wrapper.clone(),
+                "swap(address,address,uint256,uint256,address,uint256)".to_string(),
+            ),
+            TracingParams::RPCTracer(
+                RPCTracerParams::new(Some(recipient.clone()), swap_calldata)
+                    .with_state_overrides(swap_overrides),
+            ),
+        );
+
+        let quote_entry = EntryPointWithTracingParams::new(
+            EntryPoint::new(
+                format!("{wrapper}:quote(address,address,uint256)"),
+                wrapper.clone(),
+                "quote(address,address,uint256)".to_string(),
+            ),
+            TracingParams::RPCTracer(
+                RPCTracerParams::new(Some(recipient), quote_calldata)
+                    .with_state_overrides(quote_overrides),
+            ),
+        );
+
+        let results = tracer
+            .trace(block_hash, vec![swap_entry, quote_entry])
+            .await;
+
+        let swap_result = results[0]
+            .as_ref()
+            .expect("swap trace failed")
+            .tracing_result
+            .clone();
+        let quote_result = results[1]
+            .as_ref()
+            .expect("quote trace failed")
+            .tracing_result
+            .clone();
+
+        // --- demonstrate the difference -----------------------------------------------------
+        println!("\n=== KipseliPropAMMWrapper.quote(WETH, USDC, 1e18) ===");
+        print_tracing_result(&quote_result);
+        println!("\n=== KipseliPropAMMWrapper.swap(WETH, USDC, 1e18, 1, recipient, max) ===");
+        print_tracing_result(&swap_result);
+
+        let swap_addrs: HashSet<Address> = swap_result
+            .accessed_slots
+            .keys()
+            .cloned()
+            .collect();
+        let quote_addrs: HashSet<Address> = quote_result
+            .accessed_slots
+            .keys()
+            .cloned()
+            .collect();
+
+        println!("\n=== diff ===");
+        let mut only_swap: Vec<_> = swap_addrs
+            .difference(&quote_addrs)
+            .cloned()
+            .collect();
+        only_swap.sort();
+        println!("addresses touched only by swap ({}): {only_swap:#?}", only_swap.len());
+        println!(
+            "retriggers: quote={}, swap={}",
+            quote_result.retriggers.len(),
+            swap_result.retriggers.len()
+        );
+
+        // `swap` moves funds and runs the full AMM execution, so its trace must differ from the
+        // read-only `quote` path and must touch both token contracts that `quote` never reads.
+        assert_ne!(
+            swap_result.accessed_slots, quote_result.accessed_slots,
+            "expected swap and quote traces to differ"
+        );
+        assert!(
+            swap_addrs.contains(&weth) && swap_addrs.contains(&usdc),
+            "expected swap to access both WETH and USDC, got {swap_addrs:#?}"
+        );
+    }
 }
